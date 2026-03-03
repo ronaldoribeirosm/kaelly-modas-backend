@@ -8,26 +8,38 @@ const path = require('path');
 const fs = require('fs');
 const nodemailer = require('nodemailer');
 const { calcularPrecoPrazo } = require('correios-brasil');
-
-// 🚀 IMPORTANDO A STRIPE NO LUGAR DO MERCADO PAGO
 const Stripe = require('stripe');
 
-// Carrega variáveis do .env
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const BACKEND_URL = process.env.BACKEND_URL || 'https://kaelly-modas-backend.onrender.com';
-
-// --- DEFINIÇÃO DA URL DO FRONTEND (PRODUÇÃO VS LOCAL) ---
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
-
-// --- SEGURANÇA E CONFIGURAÇÕES ---
 const JWT_SECRET = process.env.JWT_SECRET || 'chave_mestra_yf_pratas_seguranca_total';
-
-// 🚀 INICIALIZANDO A STRIPE
-// Pegamos a chave secreta (Secret Key) do seu .env
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+
+// ==========================================
+// ☢️ OPÇÃO NUCLEAR: MATANDO O CORS NA FORÇA BRUTA ☢️
+// Intercepta a requisição na porta e libera tudo!
+// ==========================================
+app.use(cors()); // CORS padrão liberado
+
+app.use((req, res, next) => {
+    // Escancara as portas para qualquer site
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    
+    // Se for a mensagem "fantasma" de segurança do navegador (Preflight/OPTIONS), responde com Sucesso (200) e encerra aqui!
+    if (req.method === "OPTIONS") {
+        return res.status(200).end();
+    }
+    
+    // Se não for OPTIONS, segue o baile normal
+    next();
+});
+// ==========================================
 
 // Email (Nodemailer)
 const transporter = nodemailer.createTransport({
@@ -38,14 +50,7 @@ const transporter = nodemailer.createTransport({
     }
 });
 
-app.use(cors({
-    origin: '*', // O asterisco permite que a Vercel acesse seu backend sem frescura
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // 👈 OLHA O OPTIONS AQUI SALVANDO O DIA!
-    allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization']
-}));
-
-// 🚀 TRUQUE DsE MESTRE PARA O WEBHOOK DA STRIPE FUNCIONAR:
-// A Stripe precisa ler os dados puros (raw) para garantir que não é um hacker forjando o pagamento.
+// Suporte ao Webhook da Stripe (Raw Body)
 app.use(express.json({
     verify: (req, res, buf) => {
         req.rawBody = buf;
@@ -113,15 +118,12 @@ app.post('/auth/login', async (req, res) => {
         const user = userResult.rows[0];
         if (!user) return res.status(400).json({ error: 'Usuário não encontrado.' });
 
-        // Correção do nome da coluna de senha para bater com a tabela nova
         const validPassword = await bcrypt.compare(password, user.password_hash || user.senha);
         if (!validPassword) return res.status(400).json({ error: 'Senha incorreta.' });
 
-        // LÓGICA 2FA COMPLETA
         if (user.two_factor_enabled) {
             if (!code) {
                 const newCode = Math.floor(100000 + Math.random() * 900000).toString();
-                // Assumindo que você criou as colunas de email_code no DB novo. Se não, avise!
                 await pool.query(`UPDATE usuarios SET two_factor_secret = $1 WHERE id = $2`, [newCode, user.id]);
                 
                 try {
@@ -159,7 +161,7 @@ app.post('/auth/2fa/enable', async (req, res) => {
 });
 
 // ==========================================
-//              PRODUTOS (COM IMGBB)
+//              PRODUTOS
 // ==========================================
 
 app.get('/produtos', async (req, res) => {
@@ -288,7 +290,7 @@ app.delete('/carrinho/:pid', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-//           FRETE E PAGAMENTO (STRIPE)
+//          FRETE E PAGAMENTO (STRIPE)
 // ==========================================
 
 app.post('/calcular-frete', async (req, res) => {
@@ -334,7 +336,6 @@ app.post('/calcular-frete', async (req, res) => {
     }
 });
 
-// 🚀 NOVA ROTA DE PEDIDOS COM STRIPE
 app.post('/pedidos', authenticateToken, async (req, res) => {
     const { dados_cliente, endereco, itens, frete, prazo } = req.body;
     try {
@@ -342,24 +343,21 @@ app.post('/pedidos', authenticateToken, async (req, res) => {
         const itensHist = itens.map(i => ({ nome: i.nome, quantity: i.quantity, preco: i.preco }));
         const detalhes = { valor: frete, prazo: prazo || 'A definir', transportadora: 'Correios' };
 
-        // 1. Cria o Pedido PENDENTE no Banco PRIMEIRO
         const newOrder = await pool.query(
             `INSERT INTO pedidos (usuario_id, total, dados_cliente, endereco_entrega, status, itens, detalhes_envio) VALUES ($1, $2, $3, $4, 'pendente', $5, $6) RETURNING id`,
             [req.user.id, total, JSON.stringify(dados_cliente), JSON.stringify(endereco), JSON.stringify(itensHist), JSON.stringify(detalhes)]
         );
         const pedidoId = newOrder.rows[0].id; 
 
-        // 2. Transforma os itens para o formato da Stripe (em centavos!)
         const line_items = itens.map(i => ({
             price_data: {
                 currency: 'brl',
                 product_data: { name: i.nome },
-                unit_amount: Math.round(Number(i.preco) * 100), // R$ 50.00 vira 5000 centavos
+                unit_amount: Math.round(Number(i.preco) * 100), 
             },
             quantity: Number(i.quantity) || 1,
         }));
 
-        // Adiciona o Frete se tiver
         if (frete > 0) {
             line_items.push({
                 price_data: {
@@ -371,22 +369,18 @@ app.post('/pedidos', authenticateToken, async (req, res) => {
             });
         }
 
-        // 3. Cria a Sessão de Checkout na Stripe
         const session = await stripe.checkout.sessions.create({
-            payment_method_types: ['card'], // Se quiser PIX na Stripe precisa habilitar no painel deles
+            payment_method_types: ['card'],
             line_items,
             mode: 'payment',
-            client_reference_id: String(pedidoId), // Grava nosso ID de pedido na Stripe!
+            client_reference_id: String(pedidoId), 
             customer_email: dados_cliente.email,
-            // Truque mágico: Enganamos o Frontend enviando os parâmetros que ele já esperava do MP
             success_url: `${FRONTEND_URL}/sucesso?collection_status=approved&preference_id={CHECKOUT_SESSION_ID}&payment_id=stripe_pagamento`,
             cancel_url: `${FRONTEND_URL}/`,
         });
         
-        // 4. Salva a ID da sessão da Stripe na coluna preference_id
         await pool.query(`UPDATE pedidos SET preference_id = $1 WHERE id = $2`, [session.id, pedidoId]);
 
-        // Retorna a URL de pagamento para a tela do Checkout redirecionar a cliente
         res.json({ id: session.id, pedido_id: pedidoId, url: session.url });
     } catch (e) { 
         console.error("❌ Erro ao criar pedido na Stripe:", e); 
@@ -394,11 +388,9 @@ app.post('/pedidos', authenticateToken, async (req, res) => {
     }
 });
 
-// 🚀 ROTA NOVA PARA O FRONTEND VERIFICAR SE FOI PAGO MESMO
 app.post('/verificar-pagamento', async (req, res) => {
     const { preference_id } = req.body;
     try {
-        // Puxa a sessão da Stripe
         const session = await stripe.checkout.sessions.retrieve(preference_id);
         if (session.payment_status === 'paid') {
             res.sendStatus(200);
@@ -411,7 +403,6 @@ app.post('/verificar-pagamento', async (req, res) => {
     }
 });
 
-
 // ==========================================
 //       WEBHOOK (Ouvinte Oficial da Stripe)
 // ==========================================
@@ -422,11 +413,9 @@ app.post('/webhook', async (req, res) => {
     let event;
 
     try {
-        // Stripe verifica se a mensagem realmente veio deles (Anti-Hacker)
         if (endpointSecret) {
             event = stripe.webhooks.constructEvent(req.rawBody, sig, endpointSecret);
         } else {
-            // Se você não colocou a chave secreta de webhook no .env, ele processa sem verificar (Não recomendado em Produção)
             event = req.body;
         }
     } catch (err) {
@@ -434,12 +423,10 @@ app.post('/webhook', async (req, res) => {
         return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
-    // Se o pagamento foi concluído com sucesso
     if (event.type === 'checkout.session.completed') {
         const session = event.data.object;
         const pedidoId = session.client_reference_id;
 
-        // Se o status da fatura é 'pago' e temos o ID do nosso banco
         if (session.payment_status === 'paid' && pedidoId) {
             try {
                 await pool.query(`UPDATE pedidos SET status = 'pago' WHERE id = $1`, [pedidoId]);
@@ -449,11 +436,8 @@ app.post('/webhook', async (req, res) => {
             }
         }
     }
-
-    // Responde 200 pra Stripe não tentar enviar de novo
     res.send();
 });
-
 
 // ==========================================
 //          ÁREA DO CLIENTE & ADMIN
