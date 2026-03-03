@@ -369,7 +369,7 @@ app.post('/pedidos', authenticateToken, async (req, res) => {
 
         // 3. Cria a Sessão de Checkout na Stripe
         const session = await stripe.checkout.sessions.create({
-            payment_method_types: ['card', 'boleto'], // Se quiser PIX na Stripe precisa habilitar no painel deles
+            payment_method_types: ['card'], // Se quiser PIX na Stripe precisa habilitar no painel deles
             line_items,
             mode: 'payment',
             client_reference_id: String(pedidoId), // Grava nosso ID de pedido na Stripe!
