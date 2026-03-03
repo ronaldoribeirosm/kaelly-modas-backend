@@ -17,7 +17,7 @@ require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BACKEND_URL = process.env.BACKEND_URL || 'https://yf-pratas-backend.onrender.com';
+const BACKEND_URL = process.env.BACKEND_URL || 'https://kaelly-modas-backend.onrender.com';
 
 // --- DEFINIÇÃO DA URL DO FRONTEND (PRODUÇÃO VS LOCAL) ---
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
@@ -38,7 +38,11 @@ const transporter = nodemailer.createTransport({
     }
 });
 
-app.use(cors());
+app.use(cors({
+    origin: '*', // O asterisco permite que a Vercel acesse seu backend sem frescura
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 // 🚀 TRUQUE DE MESTRE PARA O WEBHOOK DA STRIPE FUNCIONAR:
 // A Stripe precisa ler os dados puros (raw) para garantir que não é um hacker forjando o pagamento.
