@@ -41,10 +41,10 @@ const transporter = nodemailer.createTransport({
 app.use(cors({
     origin: '*', // O asterisco permite que a Vercel acesse seu backend sem frescura
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // 👈 OLHA O OPTIONS AQUI SALVANDO O DIA!
-    allowedHeaders: ['Content-Type', 'Authorization']
+    allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization']
 }));
 
-// 🚀 TRUQUE DE MESTRE PARA O WEBHOOK DA STRIPE FUNCIONAR:
+// 🚀 TRUQUE DsE MESTRE PARA O WEBHOOK DA STRIPE FUNCIONAR:
 // A Stripe precisa ler os dados puros (raw) para garantir que não é um hacker forjando o pagamento.
 app.use(express.json({
     verify: (req, res, buf) => {
