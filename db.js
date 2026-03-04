@@ -9,6 +9,14 @@ const pool = new Pool({
     }
 });
 
+// ==========================================
+// 🛡️ AMORTECEDOR DE QUEDAS (ESCUDO ANTI-CRASH) 🛡️
+// O Neon desconecta clientes ociosos. Isso impede o servidor de desligar!
+// ==========================================
+pool.on('error', (err, client) => {
+    console.error('⚠️ Erro ocioso no banco (Neon dormiu, mas o servidor segue vivo!):', err.message);
+});
+
 // Teste de conexão ao iniciar
 pool.connect((err) => {
     if (err) {
